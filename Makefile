@@ -9,8 +9,17 @@ BUILD_DIR ?= $(PROJECT_DIR)build
 
 CXXFLAGS += -I$(INCLUDE_DIR)
 
+# USE_VO=1 builds in visual odometry (make USE_VO=1); default is without it,
+# which excludes visual_odometry.cpp and the code that uses it.
+USE_VO ?= 0
+
 TARGET := $(BUILD_DIR)/depthcam
 SRCS := $(wildcard $(SRC_DIR)/*.cpp)
+ifeq ($(USE_VO),1)
+CXXFLAGS += -DUSE_VO
+else
+SRCS := $(filter-out $(SRC_DIR)/visual_odometry.cpp,$(SRCS))
+endif
 OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRCS))
 DEPS := $(OBJS:.o=.d)
 

@@ -4,16 +4,19 @@ Real-time depth capture and processing on a SBC + Intel RealSense D435.
 
 ## Prerequisites
 
-- OpenCV 4 with the `opencv_contrib` `rgbd` module (used for visual odometry). Check with:
+- OpenCV 4. Check with:
   ```
   pkg-config --exists opencv4 && echo ok
+  ```
+- The `opencv_contrib` `rgbd` module, only if building with visual odometry (`USE_VO=1`, see below). Check with:
+  ```
   test -f /usr/include/opencv4/opencv2/rgbd.hpp && echo "rgbd module present"
   ```
 - librealsense2 — see below if not already installed.
 
 ## Installing OpenCV (with the `rgbd` contrib module) from source
 
-The distro package (`libopencv-dev`) doesn't include `opencv_contrib`, so the `rgbd` module used for visual odometry has to be built from source.
+Only needed if building with visual odometry (`USE_VO=1`, see below). The distro package (`libopencv-dev`) doesn't include `opencv_contrib`, so the `rgbd` module used for visual odometry has to be built from source.
 
 1. Install build dependencies:
    ```
@@ -109,13 +112,13 @@ Prebuilt packages lag behind and often don't target aarch64/Raspberry Pi well, s
 make
 ```
 
-or, to build from an out-of-source `build/` directory:
+By default this builds without visual odometry. To build it in (requires the `rgbd` contrib module above):
 
 ```
-cd build && make
+make USE_VO=1
 ```
 
-Either way the binary lands at `build/depthcam`. `make clean` removes it.
+The binary lands at `build/depthcam`. `make clean` removes it.
 
 ```
 ./build/depthcam

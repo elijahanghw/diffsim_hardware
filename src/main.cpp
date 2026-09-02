@@ -5,7 +5,9 @@
 #include <thread>
 
 #include "depth_processing.h"
+#ifdef USE_VO
 #include "visual_odometry.h"
+#endif
 
 int main() {
     const float CAM_MAX_RANGE = 3.0f; // meters, must match training
@@ -18,6 +20,7 @@ int main() {
 
     float depthScale = profile.get_device().first<rs2::depth_sensor>().get_depth_scale();
 
+#ifdef USE_VO
     // Visual odometry runs on color-aligned depth, kept separate from the
     // native-depth policy pipeline above so the RL input never depends on
     // whether/how VO is wired up.
@@ -32,6 +35,7 @@ int main() {
     // OpenCV offers; swap in "ICPOdometry" or "RgbdICPOdometry" for more
     // accuracy at higher CPU cost once you've measured headroom in the loop.
     VisualOdometry vo(colorK, "RgbdOdometry", /*minDepth=*/0.3f, /*maxDepth=*/4.0f);
+#endif
 
     const int STAGE1_W = 64, STAGE1_H = 48;   // first downsample
     const int POOL_SIZE = 4;                   // 4x4 max pool -> 16x12
@@ -64,6 +68,7 @@ int main() {
         rs2::depth_frame depth = frames.get_depth_frame();
         if (!depth) continue;
 
+#ifdef USE_VO
         // Color-aligned depth + grayscale, for VO only.
         rs2::frameset alignedFrames = alignToColor.process(frames);
         rs2::video_frame colorFrame = alignedFrames.get_color_frame();
@@ -90,6 +95,7 @@ int main() {
             }
             // TODO: feed vo.pose() to whatever consumes odometry (state estimator, logging, etc.)
         }
+#endif
 
         int w = depth.get_width();
         int h = depth.get_height();
