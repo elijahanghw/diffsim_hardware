@@ -11,6 +11,54 @@ Real-time depth capture and processing on a SBC + Intel RealSense D435.
   ```
 - librealsense2 — see below if not already installed.
 
+## Installing OpenCV (with the `rgbd` contrib module) from source
+
+The distro package (`libopencv-dev`) doesn't include `opencv_contrib`, so the `rgbd` module used for visual odometry has to be built from source.
+
+1. Install build dependencies:
+   ```
+   sudo apt-get update
+   sudo apt-get install -y build-essential cmake git pkg-config \
+       libjpeg-dev libpng-dev libtiff-dev \
+       libavcodec-dev libavformat-dev libswscale-dev \
+       libgtk-3-dev
+   ```
+
+2. Clone OpenCV and opencv_contrib at matching versions:
+   ```
+   git clone --branch 4.10.0 https://github.com/opencv/opencv.git
+   git clone --branch 4.10.0 https://github.com/opencv/opencv_contrib.git
+   ```
+
+3. Configure. `BUILD_LIST` trims the build down to just what this project uses (core/imgproc/highgui/videoio/calib3d/features2d plus the `rgbd` contrib module) — building all of opencv_contrib on a Pi can take several hours, this cuts it down substantially:
+   ```
+   cd opencv
+   mkdir build && cd build
+   cmake .. \
+       -DCMAKE_BUILD_TYPE=Release \
+       -DCMAKE_INSTALL_PREFIX=/usr/local \
+       -DOPENCV_EXTRA_MODULES_PATH=../../opencv_contrib/modules \
+       -DBUILD_LIST=core,imgproc,imgcodecs,highgui,videoio,calib3d,features2d,rgbd \
+       -DBUILD_TESTS=OFF -DBUILD_PERF_TESTS=OFF -DBUILD_EXAMPLES=OFF
+   ```
+
+4. Build (still slow on a Pi — budget well over an hour):
+   ```
+   make -j$(nproc)
+   ```
+
+5. Install and register with the dynamic linker:
+   ```
+   sudo make install
+   sudo ldconfig
+   ```
+
+6. Verify:
+   ```
+   pkg-config --modversion opencv4
+   test -f /usr/local/include/opencv4/opencv2/rgbd.hpp && echo "rgbd module present"
+   ```
+
 ## Installing librealsense2 from source
 
 Prebuilt packages lag behind and often don't target aarch64/Raspberry Pi well, so build from source.
