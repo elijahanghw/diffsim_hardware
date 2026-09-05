@@ -84,6 +84,18 @@ int main(int argc, char** argv) {
     const auto LOOP_PERIOD = std::chrono::duration<double>(1.0 / 20.0);
     auto next_tick = clock::now();
 
+    // Sleeps until next_tick if there's time left, otherwise reports how far behind
+    // schedule this iteration finished. context distinguishes *why* in the log line.
+    auto waitForNextTick = [&](const char* context) {
+        if (clock::now() < next_tick) {
+            std::this_thread::sleep_until(next_tick);
+        } else {
+            std::cerr << "20 Hz loop overrun by "
+                      << std::chrono::duration<double, std::milli>(clock::now() - next_tick).count()
+                      << " ms" << context << "\n";
+        }
+    };
+
     while (true) {
         next_tick += std::chrono::duration_cast<clock::duration>(LOOP_PERIOD);
 
@@ -97,7 +109,7 @@ int main(int argc, char** argv) {
             got_frame = true;
         }
         if (!got_frame) {
-            if (clock::now() < next_tick) std::this_thread::sleep_until(next_tick);
+            waitForNextTick(" (no new frame)");
             continue;
         }
 
@@ -177,13 +189,7 @@ int main(int argc, char** argv) {
         }
 #endif
 
-        if (clock::now() < next_tick) {
-            std::this_thread::sleep_until(next_tick);
-        } else {
-            std::cerr << "20 Hz loop overrun by "
-                      << std::chrono::duration<double, std::milli>(clock::now() - next_tick).count()
-                      << " ms\n";
-        }
+        waitForNextTick("");
     }
 
     return 0;
