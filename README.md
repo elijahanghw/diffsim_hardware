@@ -118,8 +118,28 @@ By default this builds without visual odometry. To build it in (requires the `rg
 make USE_VO=1
 ```
 
+By default the build also shows a live depth-preview window (`cv::imshow`). To leave that code out entirely — for headless builds with no GUI backend available — add `NO_DISPLAY=1`:
+
+```
+make USE_VO=1 NO_DISPLAY=1
+```
+
+Even without `NO_DISPLAY`, the window is skipped automatically at runtime if no `DISPLAY` environment variable is set, so a plain `ssh` session (without `-X`/`-Y`) won't fail trying to open a window.
+
 The binary lands at `build/depthcam`. `make clean` removes it.
+
+## Running
 
 ```
 ./build/depthcam
+```
+
+Optional flags:
+
+- `--record session.bag` — capture the raw camera stream to a file while running live, so a run can be reviewed later.
+- `--replay session.bag` — run the whole pipeline (VO, policy input, display) off a previously recorded file instead of a live camera.
+
+```
+./build/depthcam --record session.bag   # on the robot
+./build/depthcam --replay session.bag   # later, to review
 ```

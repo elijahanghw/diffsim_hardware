@@ -30,11 +30,21 @@ public:
     bool update(const cv::Mat& grayImage, const cv::Mat& depthMeters);
 
     // Accumulated camera-to-world pose (4x4, CV_64F); world = the pose at
-    // the first successful update().
-    const cv::Mat& pose() const { return pose_; }
+    // the first successful update(). Expressed in the FRD body convention
+    // (X forward, Y right, Z down) rather than OpenCV's raw camera-optical
+    // convention (X right, Y down, Z forward) -- so "world" here is a local
+    // FRD frame anchored to wherever the camera was pointing at startup,
+    // NOT a geodetic NED frame (that needs an external north/gravity
+    // reference, e.g. a magnetometer or IMU, which this class doesn't have).
+    cv::Mat pose() const;
 
-    // Convenience accessor for the translation component of pose().
+    // Convenience accessor for the translation component of pose(), in the
+    // same FRD convention.
     cv::Vec3d translation() const;
+
+    // Convenience accessor for the orientation component of pose(), as a
+    // quaternion (w, x, y, z), in the same FRD convention.
+    cv::Vec4d quaternion() const;
 
     void reset();
 

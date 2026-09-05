@@ -13,12 +13,21 @@ CXXFLAGS += -I$(INCLUDE_DIR)
 # which excludes visual_odometry.cpp and the code that uses it.
 USE_VO ?= 0
 
+# NO_DISPLAY=1 strips out the cv::imshow/waitKey display window entirely, for
+# headless builds (e.g. running on a robot with no GUI backend installed).
+# Even without this flag, the display is auto-skipped at runtime when no
+# DISPLAY env var is set (plain ssh without X forwarding).
+NO_DISPLAY ?= 0
+
 TARGET := $(BUILD_DIR)/depthcam
 SRCS := $(wildcard $(SRC_DIR)/*.cpp)
 ifeq ($(USE_VO),1)
 CXXFLAGS += -DUSE_VO
 else
 SRCS := $(filter-out $(SRC_DIR)/visual_odometry.cpp,$(SRCS))
+endif
+ifeq ($(NO_DISPLAY),1)
+CXXFLAGS += -DNO_DISPLAY
 endif
 OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRCS))
 DEPS := $(OBJS:.o=.d)
