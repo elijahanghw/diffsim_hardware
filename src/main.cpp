@@ -1,5 +1,6 @@
 #include <librealsense2/rs.hpp>
 #include <opencv2/opencv.hpp>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <chrono>
@@ -7,13 +8,12 @@
 #include <string>
 
 #include "depth_processing.h"
+#include "cnn/cnn_encoder.h"
 #ifdef USE_VO
 #include "visual_odometry.h"
 #endif
 
 int main(int argc, char** argv) {
-    const float CAM_MAX_RANGE = 3.0f; // meters, must match training
-
     // --record <path.bag>  : capture the raw camera stream to a file while running live
     // --replay <path.bag>  : run the whole pipeline (VO, policy input, display) off a
     //                        previously recorded file instead of a live camera
@@ -43,6 +43,13 @@ int main(int argc, char** argv) {
 #endif
 
     float depthScale = profile.get_device().first<rs2::depth_sensor>().get_depth_scale();
+    // cnn_preprocess_u16() (via cnn_encode_frame()) hardcodes a millimetre raw unit; the API
+    // doesn't guarantee that, so fail loudly instead of silently feeding the policy garbage.
+    if (std::abs(depthScale - 0.001f) > 1e-6f) {
+        std::cerr << "Depth sensor scale is " << depthScale
+                  << " m/unit, but the CNN encoder assumes exactly 0.001 (millimetres). Aborting.\n";
+        return 1;
+    }
 
 #ifdef USE_VO
     // Visual odometry runs on color-aligned depth, kept separate from the
@@ -65,8 +72,8 @@ int main(int argc, char** argv) {
 #endif
 
     const int STAGE1_W = 64, STAGE1_H = 48;   // first downsample
-    const int POOL_SIZE = 4;                   // 4x4 max pool -> 16x12
 #ifndef NO_DISPLAY
+    const int POOL_SIZE = 4;                    // 4x4 max pool -> 16x12, for the display only
     const int DISPLAY_SCALE = 40;               // 16x12 -> 640x480 window
 #endif
 
@@ -138,15 +145,17 @@ int main(int argc, char** argv) {
         // Wrap raw RealSense depth buffer as an OpenCV Mat (no copy)
         cv::Mat rawDepth(cv::Size(w, h), CV_16UC1, (void*)depth.get_data(), cv::Mat::AUTO_STEP);
 
-        // Downsample to 64x48 (nearest-neighbor keeps real sample values)
+        // Downsample to CNN_RAW_W x CNN_RAW_H (nearest-neighbor keeps real sample values)
         cv::Mat small;
         cv::resize(rawDepth, small, cv::Size(STAGE1_W, STAGE1_H), 0, 0, cv::INTER_NEAREST);
 
-        // Convert to meters and run the training-matched normalize + max-pool
-        cv::Mat smallMeters;
-        small.convertTo(smallMeters, CV_32FC1, depthScale);
-        cv::Mat policyInput = processedDepth(smallMeters, POOL_SIZE, CAM_MAX_RANGE); // 12x16 float
-        // TODO: feed policyInput to the policy network
+        // cnn_encode_frame() runs the training-matched normalize + 4x4 max-pool and the encoder
+        // forward pass in one call, straight off the raw millimetre buffer (small is freshly
+        // allocated, so it's contiguous). Built with CNN_INVALID_IS_FAR=1 (see Makefile): invalid/0
+        // readings map to max range (far), not the near/blind-zone default.
+        float features[CNN_FEATURE_DIM];
+        cnn_encode_frame(small.ptr<uint16_t>(), features);
+        // TODO: feed features to the FC (recurrent half, see ../fc/)
 
 #ifndef NO_DISPLAY
         if (displayEnabled) {

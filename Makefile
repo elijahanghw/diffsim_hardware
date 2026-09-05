@@ -2,6 +2,11 @@ CXX := g++
 CXXFLAGS := -std=c++17 -O2 -Wall -MMD -MP $(shell pkg-config --cflags opencv4 realsense2)
 LDFLAGS := $(shell pkg-config --libs opencv4 realsense2)
 
+CC := gcc
+# Invalid/0 depth reads as max range (far), not the generated default of near/blind-zone --
+# matches this project's depth pipeline convention (see src/main.cpp).
+CFLAGS := -std=c11 -O2 -Wall -MMD -MP -DCNN_INVALID_IS_FAR=1
+
 PROJECT_DIR := $(dir $(lastword $(MAKEFILE_LIST)))
 SRC_DIR := $(PROJECT_DIR)src
 INCLUDE_DIR := $(PROJECT_DIR)include
@@ -32,20 +37,31 @@ endif
 OBJS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SRCS))
 DEPS := $(OBJS:.o=.d)
 
+CSRCS := $(wildcard $(SRC_DIR)/cnn/*.c)
+COBJS := $(patsubst $(SRC_DIR)/cnn/%.c,$(BUILD_DIR)/cnn/%.o,$(CSRCS))
+CDEPS := $(COBJS:.o=.d)
+
 .PHONY: all clean
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $(OBJS) $(LDFLAGS)
+$(TARGET): $(OBJS) $(COBJS)
+	$(CXX) $(CXXFLAGS) -o $@ $(OBJS) $(COBJS) $(LDFLAGS)
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
+$(BUILD_DIR)/cnn/%.o: $(SRC_DIR)/cnn/%.c | $(BUILD_DIR)/cnn
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
+$(BUILD_DIR)/cnn:
+	mkdir -p $(BUILD_DIR)/cnn
+
 clean:
-	rm -f $(TARGET) $(OBJS) $(DEPS)
+	rm -f $(TARGET) $(OBJS) $(DEPS) $(COBJS) $(CDEPS)
 
 -include $(DEPS)
+-include $(CDEPS)

@@ -1,6 +1,5 @@
 #include "depth_processing.h"
 
-#include <algorithm>
 #include <limits>
 
 cv::Mat depthPool(const cv::Mat& src, int poolSize, bool useMin) {
@@ -22,34 +21,6 @@ cv::Mat depthPool(const cv::Mat& src, int poolSize, bool useMin) {
                 }
             }
             dst.at<uint16_t>(y, x) = found ? best : 0;
-        }
-    }
-    return dst;
-}
-
-cv::Mat processedDepth(const cv::Mat& depthMeters, int poolSize, float camMaxRange) {
-    cv::Mat normd(depthMeters.size(), CV_32FC1);
-    for (int y = 0; y < depthMeters.rows; y++) {
-        for (int x = 0; x < depthMeters.cols; x++) {
-            float d = depthMeters.at<float>(y, x);
-            if (d == 0.0f) d = camMaxRange;
-            d = std::clamp(d, 0.3f, camMaxRange);
-            normd.at<float>(y, x) = 3.0f / d - 0.6f;
-        }
-    }
-
-    int outW = normd.cols / poolSize;
-    int outH = normd.rows / poolSize;
-    cv::Mat dst(outH, outW, CV_32FC1);
-    for (int y = 0; y < outH; y++) {
-        for (int x = 0; x < outW; x++) {
-            float best = -std::numeric_limits<float>::infinity();
-            for (int dy = 0; dy < poolSize; dy++) {
-                for (int dx = 0; dx < poolSize; dx++) {
-                    best = std::max(best, normd.at<float>(y * poolSize + dy, x * poolSize + dx));
-                }
-            }
-            dst.at<float>(y, x) = best;
         }
     }
     return dst;
