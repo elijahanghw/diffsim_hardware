@@ -188,35 +188,52 @@ stats.
 
 ## Logging poses
 
-`--log poses.csv` records both the mocap pose (received by the relay) and the VO
-estimate to one CSV so you can plot them together and eyeball VO accuracy against
-the mocap ground truth:
+`--log poses.csv` records the mocap pose (received by the relay), the VO estimate,
+and a marker for every processed depth frame — all on one shared timeline, so you
+can plot them together, gauge VO accuracy against the mocap ground truth, and sync
+either against a recorded depth `.bag`:
 
 ```
-./build/depthcam --fc-serial /dev/ttyDB --log poses.csv
+./build/depthcam --fc-serial /dev/ttyDB --record session.bag --log poses.csv
 ```
 
-Columns: `t_s,source,x,y,z,qw,qx,qy,qz`. `t_s` is seconds since the log opened —
-a single monotonic timeline shared by both threads, so the two series align
-directly. `source` is `mocap` or `vo`; the file interleaves rows from both as
-they arrive (mocap at the motion-capture rate, VO at the ~20 Hz loop rate).
+Columns: `t_s,source,x,y,z,qw,qx,qy,qz,frame,rs_ts_ms`. `t_s` is seconds since the
+log opened — a single monotonic timeline shared by all rows, so everything aligns
+directly. `source` is one of:
 
-What actually gets logged depends on the build and flags:
+- **`mocap`** — ground-truth pose (`x..qz` filled). Needs a `USE_RELAY` build with
+  `--fc-serial` and mocap packets on UDP 5005.
+- **`vo`** — visual-odometry pose (`x..qz` filled). Needs a `USE_VO` build; only
+  appears when VO produces a pose.
+- **`depth`** — one row per processed depth frame (`frame`, `rs_ts_ms` filled),
+  where `frame` is the RealSense frame number and `rs_ts_ms` its hardware
+  timestamp. Always logged.
 
-- **`mocap`** rows need a `USE_RELAY` build with `--fc-serial`, and mocap
-  packets arriving on UDP 5005.
-- **`vo`** rows need a `USE_VO` build, and only appear when VO produces a pose.
+### Syncing with the depth video
 
-Frames differ between the two sources, so **align them before comparing**: mocap
+The `depth` rows are the bridge between a `--record` `.bag` and the pose timeline:
+each `.bag` frame (matched by its frame number) has a `t_s`, and from there you
+find the nearest `mocap`/`vo` pose. So to build an overlay video, iterate the
+`.bag` frames, look up each frame number in the log to get its `t_s`, and
+interpolate the pose at that time.
+
+Frames differ between the pose sources, so **align them before comparing**: mocap
 is NED (as forwarded to the FC as `EXTERNAL_POSE`); VO reports position in its own
-frame with an FRD body quaternion. A quick plot in Python:
+frame with an FRD body quaternion. A quick trajectory plot:
 
 ```python
 import pandas as pd, matplotlib.pyplot as plt
 df = pd.read_csv("poses.csv")
-for src, g in df.groupby("source"):
+for src in ("mocap", "vo"):
+    g = df[df.source == src]
     plt.plot(g.x, g.y, label=src)
 plt.legend(); plt.axis("equal"); plt.show()
+
+# pose at a given depth frame number N:
+frames = df[df.source == "depth"]
+t = frames.loc[frames.frame == N, "t_s"].iloc[0]
+vo = df[df.source == "vo"]
+row = vo.iloc[(vo.t_s - t).abs().argmin()]   # nearest VO pose to that frame
 ```
 
 ### pi-protocol

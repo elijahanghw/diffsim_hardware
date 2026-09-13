@@ -170,6 +170,10 @@ int main(int argc, char** argv) {
         rs2::depth_frame depth = frames.get_depth_frame();
         if (!depth) continue;
 
+        // Mark this frame on the log timeline so a --record .bag frame can be
+        // matched (by number / hardware timestamp) to the nearest logged pose.
+        if (logging) poseLogger.logDepthFrame(depth.get_frame_number(), depth.get_timestamp());
+
 #ifdef USE_VO
         // Color-aligned depth + grayscale, for VO only.
         rs2::frameset alignedFrames = alignToColor.process(frames);
