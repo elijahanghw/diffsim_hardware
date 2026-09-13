@@ -1,6 +1,6 @@
 CXX := g++
-CXXFLAGS := -std=c++17 -O2 -Wall -MMD -MP $(shell pkg-config --cflags opencv4 realsense2)
-LDFLAGS := $(shell pkg-config --libs opencv4 realsense2)
+CXXFLAGS := -std=c++17 -O2 -Wall -MMD -MP -pthread $(shell pkg-config --cflags opencv4 realsense2)
+LDFLAGS := -pthread $(shell pkg-config --libs opencv4 realsense2)
 
 CC := gcc
 # Invalid/0 depth reads as max range (far), not the generated default of near/blind-zone --
@@ -12,7 +12,7 @@ SRC_DIR := $(PROJECT_DIR)src
 INCLUDE_DIR := $(PROJECT_DIR)include
 BUILD_DIR ?= $(PROJECT_DIR)build
 
-CXXFLAGS += -I$(INCLUDE_DIR)
+CXXFLAGS += -I$(INCLUDE_DIR) -I$(SRC_DIR)
 
 # USE_VO=1 builds in visual odometry (make USE_VO=1); default is without it,
 # which excludes visual_odometry.cpp and the code that uses it.
@@ -49,6 +49,11 @@ CSRCS := $(wildcard $(SRC_DIR)/cnn/*.c)
 COBJS := $(patsubst $(SRC_DIR)/cnn/%.c,$(BUILD_DIR)/cnn/%.o,$(CSRCS))
 CDEPS := $(COBJS:.o=.d)
 
+# Pose logger (always built; used by --log for mocap vs VO comparison).
+LOG_SRCS := $(wildcard $(SRC_DIR)/logging/*.cpp)
+LOG_OBJS := $(patsubst $(SRC_DIR)/logging/%.cpp,$(BUILD_DIR)/logging/%.o,$(LOG_SRCS))
+LOG_DEPS := $(LOG_OBJS:.o=.d)
+
 # Relay + pi-protocol (only when USE_RELAY=1; empty otherwise so the link and
 # clean lines below stay valid either way).
 RELAY_OBJS :=
@@ -56,8 +61,7 @@ PI_OBJS :=
 RELAY_DEPS :=
 PI_DEPS :=
 ifeq ($(USE_RELAY),1)
-CXXFLAGS += -DUSE_RELAY -I$(SRC_DIR)/pi_protocol -DPI_STATS -DPI_USE_PRINT_MSGS -pthread
-LDFLAGS += -pthread
+CXXFLAGS += -DUSE_RELAY -I$(SRC_DIR)/pi_protocol -DPI_STATS -DPI_USE_PRINT_MSGS
 # Generated pi-protocol C is compiled with the C compiler and its feature flags.
 PI_CFLAGS := -std=c11 -O2 -Wall -MMD -MP -I$(SRC_DIR)/pi_protocol -DPI_STATS -DPI_USE_PRINT_MSGS
 RELAY_SRCS := $(wildcard $(SRC_DIR)/relay/*.cpp)
@@ -72,14 +76,17 @@ endif
 
 all: $(TARGET)
 
-$(TARGET): $(OBJS) $(COBJS) $(RELAY_OBJS) $(PI_OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $(OBJS) $(COBJS) $(RELAY_OBJS) $(PI_OBJS) $(LDFLAGS)
+$(TARGET): $(OBJS) $(COBJS) $(LOG_OBJS) $(RELAY_OBJS) $(PI_OBJS)
+	$(CXX) $(CXXFLAGS) -o $@ $(OBJS) $(COBJS) $(LOG_OBJS) $(RELAY_OBJS) $(PI_OBJS) $(LDFLAGS)
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 $(BUILD_DIR)/cnn/%.o: $(SRC_DIR)/cnn/%.c | $(BUILD_DIR)/cnn
 	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(BUILD_DIR)/logging/%.o: $(SRC_DIR)/logging/%.cpp | $(BUILD_DIR)/logging
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 $(BUILD_DIR)/relay/%.o: $(SRC_DIR)/relay/%.cpp | $(BUILD_DIR)/relay
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
@@ -92,6 +99,9 @@ $(BUILD_DIR):
 
 $(BUILD_DIR)/cnn:
 	mkdir -p $(BUILD_DIR)/cnn
+
+$(BUILD_DIR)/logging:
+	mkdir -p $(BUILD_DIR)/logging
 
 $(BUILD_DIR)/relay:
 	mkdir -p $(BUILD_DIR)/relay
@@ -108,9 +118,10 @@ regen-pi:
 	cp $(PROJECT_DIR)ext/pi-protocol/src/pi-protocol.c $(SRC_DIR)/pi_protocol/pi-protocol.c
 
 clean:
-	rm -f $(TARGET) $(OBJS) $(DEPS) $(COBJS) $(CDEPS) $(RELAY_OBJS) $(RELAY_DEPS) $(PI_OBJS) $(PI_DEPS)
+	rm -f $(TARGET) $(OBJS) $(DEPS) $(COBJS) $(CDEPS) $(LOG_OBJS) $(LOG_DEPS) $(RELAY_OBJS) $(RELAY_DEPS) $(PI_OBJS) $(PI_DEPS)
 
 -include $(DEPS)
 -include $(CDEPS)
+-include $(LOG_DEPS)
 -include $(RELAY_DEPS)
 -include $(PI_DEPS)

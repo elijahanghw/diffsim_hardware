@@ -9,6 +9,7 @@
 
 #include "depth_processing.h"
 #include "cnn/cnn_encoder.h"
+#include "logging/pose_logger.h"
 #ifdef USE_VO
 #include "visual_odometry.h"
 #endif
@@ -26,7 +27,9 @@ int main(int argc, char** argv) {
     //                        NN_INPUT_CHUNK). Omit --fc-serial to run without
     //                        the FC link. Baud defaults to 500000. Only active
     //                        in USE_RELAY builds.
-    std::string recordPath, replayPath;
+    // --log <path.csv>     : log timestamped mocap (relay) and VO poses to a CSV
+    //                        on one timeline, for offline accuracy plots.
+    std::string recordPath, replayPath, logPath;
 #ifdef USE_RELAY
     std::string fcSerial;
     int fcBaud = 500000;
@@ -37,6 +40,8 @@ int main(int argc, char** argv) {
             recordPath = argv[++i];
         } else if (arg == "--replay" && i + 1 < argc) {
             replayPath = argv[++i];
+        } else if (arg == "--log" && i + 1 < argc) {
+            logPath = argv[++i];
         }
 #ifdef USE_RELAY
         else if (arg == "--fc-serial" && i + 1 < argc) {
@@ -45,6 +50,18 @@ int main(int argc, char** argv) {
             fcBaud = std::atoi(argv[++i]);
         }
 #endif
+    }
+
+    // Pose logger (mocap vs VO). Enabled by --log; a no-op otherwise.
+    PoseLogger poseLogger;
+    bool logging = false;
+    if (!logPath.empty()) {
+        logging = poseLogger.open(logPath);
+        if (!logging) {
+            std::cerr << "Failed to open pose log file " << logPath << "\n";
+        } else {
+            std::cerr << "Logging mocap + VO poses to " << logPath << "\n";
+        }
     }
 
     rs2::pipeline pipe;
@@ -97,6 +114,7 @@ int main(int argc, char** argv) {
     FcRelay relay;
     bool relayActive = false;
     if (!fcSerial.empty()) {
+        if (logging) relay.setMocapLogger(&poseLogger);
         relayActive = relay.start(fcSerial, fcBaud);
         if (!relayActive) {
             std::cerr << "FcRelay: failed to start on " << fcSerial << " @ " << fcBaud
@@ -172,16 +190,11 @@ int main(int argc, char** argv) {
             cv::Mat depthMeters;
             depthAlignedSmall.convertTo(depthMeters, CV_32FC1, depthScale);
 
-            auto voStart = clock::now();
             bool voOk = vo.update(gray, depthMeters);
-            double voMs = std::chrono::duration<double, std::milli>(clock::now() - voStart).count();
-
-            if (voOk) {
+            if (voOk && logging) {
                 cv::Vec3d t = vo.translation();
-                cv::Vec4d q = vo.quaternion(); // (w, x, y, z), FRD
-                std::cerr << "VO pos: [" << t[0] << ", " << t[1] << ", " << t[2]
-                          << "] quat: [" << q[0] << ", " << q[1] << ", " << q[2] << ", " << q[3]
-                          << "] (" << voMs << " ms)\n";
+                cv::Vec4d q = vo.quaternion();  // (w, x, y, z), FRD
+                poseLogger.log("vo", t[0], t[1], t[2], q[0], q[1], q[2], q[3]);
             }
             // TODO: feed vo.pose() to whatever consumes odometry (state estimator, logging, etc.)
         }
@@ -235,5 +248,6 @@ int main(int argc, char** argv) {
 #ifdef USE_RELAY
     relay.stop();
 #endif
+    poseLogger.close();
     return 0;
 }

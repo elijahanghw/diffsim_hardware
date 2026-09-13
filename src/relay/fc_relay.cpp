@@ -5,6 +5,8 @@
 
 #include "fc_relay.h"
 
+#include "logging/pose_logger.h"
+
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -263,6 +265,11 @@ void FcRelay::run() {
             memcpy(&pose, optitrackBuffer + sizeof(unsigned int), sizeof(pose_t));
             memcpy(&pose_der, optitrackBuffer + sizeof(unsigned int) + sizeof(pose_t),
                    sizeof(pose_der_t));
+
+            if (mocapLogger_) {
+                mocapLogger_->log("mocap", pose.x, pose.y, pose.z,
+                                  pose.qw, pose.qx, pose.qy, pose.qz);
+            }
 
             piMsgFakeGpsTx.time_us = piMsgEkfInputsRx->time_us;
             static constexpr double CYBERZOO_LAT = 51.99071002805145;

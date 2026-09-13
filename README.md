@@ -155,6 +155,7 @@ Optional flags:
 - `--replay session.bag` — run the whole pipeline (VO, policy input, display) off a previously recorded file instead of a live camera.
 - `--fc-serial <dev>` — *(USE_RELAY builds only)* open the flight-controller serial link, e.g. `--fc-serial /dev/ttyDB`. Omit it to run without the FC link (just capture + encode). See below.
 - `--fc-baud <rate>` — *(USE_RELAY builds only)* FC serial baud rate. Defaults to `500000`.
+- `--log <path.csv>` — log time-stamped mocap and VO poses to a CSV for offline accuracy comparison. See [Logging poses](#logging-poses).
 
 ```
 ./build/depthcam --record session.bag                     # on the robot
@@ -184,6 +185,39 @@ never stalls the capture loop.
 
 `SIGUSR1` prints the last received pi-protocol messages; `SIGUSR2` prints parser
 stats.
+
+## Logging poses
+
+`--log poses.csv` records both the mocap pose (received by the relay) and the VO
+estimate to one CSV so you can plot them together and eyeball VO accuracy against
+the mocap ground truth:
+
+```
+./build/depthcam --fc-serial /dev/ttyDB --log poses.csv
+```
+
+Columns: `t_s,source,x,y,z,qw,qx,qy,qz`. `t_s` is seconds since the log opened —
+a single monotonic timeline shared by both threads, so the two series align
+directly. `source` is `mocap` or `vo`; the file interleaves rows from both as
+they arrive (mocap at the motion-capture rate, VO at the ~20 Hz loop rate).
+
+What actually gets logged depends on the build and flags:
+
+- **`mocap`** rows need a `USE_RELAY` build with `--fc-serial`, and mocap
+  packets arriving on UDP 5005.
+- **`vo`** rows need a `USE_VO` build, and only appear when VO produces a pose.
+
+Frames differ between the two sources, so **align them before comparing**: mocap
+is NED (as forwarded to the FC as `EXTERNAL_POSE`); VO reports position in its own
+frame with an FRD body quaternion. A quick plot in Python:
+
+```python
+import pandas as pd, matplotlib.pyplot as plt
+df = pd.read_csv("poses.csv")
+for src, g in df.groupby("source"):
+    plt.plot(g.x, g.y, label=src)
+plt.legend(); plt.axis("equal"); plt.show()
+```
 
 ### pi-protocol
 

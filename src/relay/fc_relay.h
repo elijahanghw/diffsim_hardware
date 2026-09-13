@@ -7,6 +7,8 @@
 #include <string>
 #include <thread>
 
+class PoseLogger;
+
 // FcRelay — on-board bridge from this program to the indiflight flight
 // controller over the pi-protocol serial link.
 //
@@ -41,6 +43,10 @@ public:
     // standalone relay.
     bool start(const std::string& serialPort, int baudRateHz);
 
+    // Optional: log each received mocap pose to this logger (labelled "mocap").
+    // Call before start(); the logger must outlive this FcRelay.
+    void setMocapLogger(PoseLogger* logger) { mocapLogger_ = logger; }
+
     // Hand the latest CNN feature vector to the relay thread. Copies n floats
     // (must equal kFeatureDim). Cheap and lock-guarded; safe to call every
     // frame from the camera loop.
@@ -67,4 +73,6 @@ private:
     std::mutex featuresMutex_;
     std::array<float, kFeatureDim> features_{};
     std::uint64_t featuresSeq_ = 0;
+
+    PoseLogger* mocapLogger_ = nullptr;
 };
