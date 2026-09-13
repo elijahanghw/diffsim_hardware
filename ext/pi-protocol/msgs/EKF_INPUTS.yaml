@@ -1,0 +1,32 @@
+# Copyright 2023 Till Blaha (Delft University of Technology)
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU Lesser General Public License as published by the Free
+# Software Foundation, either version 3 of the License, or (at your option) any
+# later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY
+# WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+# PARTICULAR PURPOSE. See the GNU Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public License along
+# with this program.
+#
+# If not, see <https://www.gnu.org/licenses/>.
+
+# supported datatypes
+# uint8_t, uint16_t, uint32_t, uint64_t, float, double
+
+# 4  +  2 * 6  +  2 * 4  =  24 bytes per message  => 240 / 921600 = 0.26ms wire delay
+fields:
+  time_us: uint32_t
+  x: int16_t  # acc in m/s/s  =  ( this int16_t ) * ( 9.81 / 2048 )
+  y: int16_t
+  z: int16_t
+  p: int16_t  # rate in rad/s  =  ( this int16_t ) * (( 2000 * 3.1415 / 180 ) / ( 32768 ))
+  q: int16_t  # FRD body frame
+  r: int16_t
+  omega1: uint16_t  # rotor speed in rad/s, no conversion necessary
+  omega2: uint16_t  # betaflight numbering (1: RR, 2: FR, 3: RL, 4: FL)
+  omega3: uint16_t
+  omega4: uint16_t

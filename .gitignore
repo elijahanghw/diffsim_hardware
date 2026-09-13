@@ -1,1 +1,3 @@
 /build/
+.vscode/
+ext/pi-protocol/**/__pycache__/

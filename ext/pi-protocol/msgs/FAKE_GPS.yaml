@@ -1,0 +1,30 @@
+# Copyright 2023 Till Blaha (Delft University of Technology)
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU Lesser General Public License as published by the Free
+# Software Foundation, either version 3 of the License, or (at your option) any
+# later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY
+# WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+# PARTICULAR PURPOSE. See the GNU Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public License along
+# with this program.
+#
+# If not, see <https://www.gnu.org/licenses/>.
+
+# supported datatypes
+# (u)int8_t, (u)int16_t, (u)int32_t, (u)int64_t, float, double (double needs to be verified working)
+
+# see src/main/io/gps.h
+fields:
+  time_us: uint32_t
+  # LLH lication in NEU axis system 
+  lat: int32_t # latitude * 1e+7
+  lon: int32_t # longitude * 1e+7
+  altCm: int32_t # in cm
+  hdop: uint16_t # DOP * 100
+  groundSpeed: uint16_t # speed in 0.01m/s
+  groundCourse: uint16_t # degrees * 10
+  numSat: uint8_t

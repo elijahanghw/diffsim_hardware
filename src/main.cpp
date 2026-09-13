@@ -12,12 +12,25 @@
 #ifdef USE_VO
 #include "visual_odometry.h"
 #endif
+#ifdef USE_RELAY
+#include "relay/fc_relay.h"
+#endif
 
 int main(int argc, char** argv) {
     // --record <path.bag>  : capture the raw camera stream to a file while running live
     // --replay <path.bag>  : run the whole pipeline (VO, policy input, display) off a
     //                        previously recorded file instead of a live camera
+    // --fc-serial <dev> --fc-baud <rate> : bridge to the indiflight FC over
+    //                        pi-protocol serial (relays optitrack/setpoint/
+    //                        keyboard UDP and transmits the CNN features as
+    //                        NN_INPUT_CHUNK). Omit --fc-serial to run without
+    //                        the FC link. Baud defaults to 500000. Only active
+    //                        in USE_RELAY builds.
     std::string recordPath, replayPath;
+#ifdef USE_RELAY
+    std::string fcSerial;
+    int fcBaud = 500000;
+#endif
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--record" && i + 1 < argc) {
@@ -25,6 +38,13 @@ int main(int argc, char** argv) {
         } else if (arg == "--replay" && i + 1 < argc) {
             replayPath = argv[++i];
         }
+#ifdef USE_RELAY
+        else if (arg == "--fc-serial" && i + 1 < argc) {
+            fcSerial = argv[++i];
+        } else if (arg == "--fc-baud" && i + 1 < argc) {
+            fcBaud = std::atoi(argv[++i]);
+        }
+#endif
     }
 
     rs2::pipeline pipe;
@@ -69,6 +89,22 @@ int main(int argc, char** argv) {
     // OpenCV offers; swap in "ICPOdometry" or "RgbdICPOdometry" for more
     // accuracy at higher CPU cost once you've measured headroom in the loop.
     VisualOdometry vo(colorK, "RgbdOdometry", /*minDepth=*/0.3f, /*maxDepth=*/4.0f);
+#endif
+
+#ifdef USE_RELAY
+    // FC serial bridge. Owns the serial port on its own thread; the loop below
+    // only hands it each new CNN feature vector via publishFeatures().
+    FcRelay relay;
+    bool relayActive = false;
+    if (!fcSerial.empty()) {
+        relayActive = relay.start(fcSerial, fcBaud);
+        if (!relayActive) {
+            std::cerr << "FcRelay: failed to start on " << fcSerial << " @ " << fcBaud
+                      << " baud; continuing without the FC link.\n";
+        }
+    } else {
+        std::cerr << "No --fc-serial given; running without the FC link.\n";
+    }
 #endif
 
     const int STAGE1_W = 64, STAGE1_H = 48;   // first downsample
@@ -167,7 +203,11 @@ int main(int argc, char** argv) {
         // readings map to max range (far), not the near/blind-zone default.
         float features[CNN_FEATURE_DIM];
         cnn_encode_frame(small.ptr<uint16_t>(), features);
-        // TODO: feed features to the FC (recurrent half, see ../fc/)
+#ifdef USE_RELAY
+        // Hand the latest features to the relay thread, which transmits them to
+        // the FC as NN_INPUT_CHUNK. The FC runs the recurrent half (see ../fc/).
+        if (relayActive) relay.publishFeatures(features, CNN_FEATURE_DIM);
+#endif
 
 #ifndef NO_DISPLAY
         if (displayEnabled) {
@@ -192,5 +232,8 @@ int main(int argc, char** argv) {
         waitForNextTick("");
     }
 
+#ifdef USE_RELAY
+    relay.stop();
+#endif
     return 0;
 }

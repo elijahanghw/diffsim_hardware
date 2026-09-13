@@ -1,0 +1,33 @@
+# Copyright 2023 Till Blaha (Delft University of Technology)
+#
+# This program is free software: you can redistribute it and/or modify it under
+# the terms of the GNU Lesser General Public License as published by the Free
+# Software Foundation, either version 3 of the License, or (at your option) any
+# later version.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY
+# WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+# PARTICULAR PURPOSE. See the GNU Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public License along
+# with this program.
+#
+# If not, see <https://www.gnu.org/licenses/>.
+
+# supported datatypes
+# (u)int8_t, (u)int16_t, (u)int32_t, (u)int64_t, float, double (double needs to be verified working)
+
+# see src/main/io/gps.h
+fields:
+  time_us: uint32_t
+  # LLH lication in NEU axis system 
+  ned_x: float # pos
+  ned_y: float
+  ned_z: float
+  ned_xd: float # vel
+  ned_yd: float
+  ned_zd: float
+  body_qi: float # attitude quaternion
+  body_qx: float
+  body_qy: float
+  body_qz: float

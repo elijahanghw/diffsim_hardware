@@ -2,6 +2,13 @@
 
 Real-time depth capture and processing on a SBC + Intel RealSense D435.
 
+It downsamples the D435 depth stream, runs the on-board CNN depth encoder to
+produce the 64-float feature vector the navigation policy consumes, and
+optionally bridges to an indiflight flight controller over pi-protocol serial —
+relaying motion-capture pose,
+position setpoints and keyboard input to the FC, and transmitting the CNN
+features as `NN_INPUT_CHUNK`. Visual odometry can run on the side.
+
 ## Prerequisites
 
 - OpenCV 4. Check with:
@@ -126,6 +133,14 @@ make USE_VO=1 NO_DISPLAY=1
 
 Even without `NO_DISPLAY`, the window is skipped automatically at runtime if no `DISPLAY` environment variable is set, so a plain `ssh` session (without `-X`/`-Y`) won't fail trying to open a window.
 
+To build in the flight-controller bridge (see [Flight-controller bridge](#flight-controller-bridge) below), add `USE_RELAY=1`:
+
+```
+make USE_RELAY=1 USE_VO=1 NO_DISPLAY=1
+```
+
+This links in `src/relay/` (the FC bridge) and the vendored pi-protocol in `src/pi_protocol/`. No extra system packages are needed. The default build (`USE_RELAY=0`) leaves it out, along with the pi-protocol dependency.
+
 The binary lands at `build/depthcam`. `make clean` removes it.
 
 ## Running
@@ -138,8 +153,48 @@ Optional flags:
 
 - `--record session.bag` — capture the raw camera stream to a file while running live, so a run can be reviewed later.
 - `--replay session.bag` — run the whole pipeline (VO, policy input, display) off a previously recorded file instead of a live camera.
+- `--fc-serial <dev>` — *(USE_RELAY builds only)* open the flight-controller serial link, e.g. `--fc-serial /dev/ttyDB`. Omit it to run without the FC link (just capture + encode). See below.
+- `--fc-baud <rate>` — *(USE_RELAY builds only)* FC serial baud rate. Defaults to `500000`.
 
 ```
-./build/depthcam --record session.bag   # on the robot
-./build/depthcam --replay session.bag   # later, to review
+./build/depthcam --record session.bag                     # on the robot
+./build/depthcam --replay session.bag                     # later, to review
+./build/depthcam --fc-serial /dev/ttyDB                   # bridge to the FC at 500000 baud
+./build/depthcam --fc-serial /dev/ttyDB --fc-baud 921600
 ```
+
+## Flight-controller bridge
+
+In a `USE_RELAY=1` build, passing `--fc-serial` turns this program into the
+on-board bridge to the indiflight flight controller — the drone-side replacement
+for the standalone relay that HITL uses. It owns the FC serial port (single
+writer) and, on a background thread:
+
+- reads `EKF_INPUTS` from the FC for the `time_us` timestamp base;
+- relays UDP inputs to the FC: motion-capture pose on port **5005** →
+  `FAKE_GPS` + `EXTERNAL_POSE`, position setpoints on **5006** → `POS_SETPOINT`,
+  keyboard input on **5007** → `KEYBOARD`;
+- transmits each CNN feature vector as two `NN_INPUT_CHUNK` messages (64 floats,
+  32 per chunk).
+
+Unlike the HITL relay, it does **not** listen for features on the network: they
+come straight from the on-board CNN. The camera/CNN loop hands each new vector to
+the relay thread, which transmits it on its own schedule, so the serial link
+never stalls the capture loop.
+
+`SIGUSR1` prints the last received pi-protocol messages; `SIGUSR2` prints parser
+stats.
+
+### pi-protocol
+
+The serial wire format is defined by pi-protocol. The **generated** C/H that the
+build compiles is checked in at `src/pi_protocol/`, so a normal build needs no
+codegen step. The library it is generated from is vendored at `ext/pi-protocol/`.
+If the protocol changes, edit `ext/pi-protocol/` and regenerate:
+
+```
+make regen-pi        # needs python3 + jinja2 (ext/pi-protocol/python/requirements.txt)
+```
+
+The `config.yaml` version and message set must match the firmware — a mismatch
+silently corrupts framing. See `src/pi_protocol/README.md` for details.
