@@ -1,3 +1,10 @@
 /build/
 .vscode/
 ext/pi-protocol/**/__pycache__/
+
+# recordings / logs (large binaries and data, not source)
+recording/
+*.bag
+*.db3
+*.bbl
+*.csv
