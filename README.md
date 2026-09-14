@@ -184,6 +184,11 @@ deliberately uses the *unfiltered* depth.
 The filters are stateful across frames (the temporal one keeps history) and add a
 few ms per frame — watch the loop-overrun log if the SBC is tight.
 
+The 640×480 → 64×48 downsample that follows is a **hole-aware min-pool**: each
+10×10 block takes the nearest valid (non-zero) depth, so the closest obstacle in
+every cell survives and dropouts are ignored. (A plain nearest-neighbour resize
+sampled one pixel per block and could land on a hole or skip a thin/near object.)
+
 ## Flight-controller bridge
 
 In a `USE_RELAY=1` build, passing `--fc-serial` turns this program into the

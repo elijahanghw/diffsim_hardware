@@ -246,9 +246,17 @@ int main(int argc, char** argv) {
         // Wrap the (filtered) RealSense depth buffer as an OpenCV Mat (no copy)
         cv::Mat rawDepth(cv::Size(w, h), CV_16UC1, (void*)cnnDepth.get_data(), cv::Mat::AUTO_STEP);
 
-        // Downsample to CNN_RAW_W x CNN_RAW_H (nearest-neighbor keeps real sample values)
-        cv::Mat small;
-        cv::resize(rawDepth, small, cv::Size(STAGE1_W, STAGE1_H), 0, 0, cv::INTER_NEAREST);
+        // Downsample to CNN_RAW_W x CNN_RAW_H by min-pooling the nearest valid
+        // (non-zero) depth in each block. Unlike INTER_NEAREST (one sample per
+        // block, which could land on a hole or skip a thin/near object), this
+        // keeps the closest obstacle in every cell and ignores dropouts -- what
+        // obstacle avoidance needs. 640x480 -> 64x48 is an exact 10x pooling.
+        const int poolW = w / STAGE1_W;   // 640/64 = 10; 480/48 = 10 (square pooling)
+        if (h / STAGE1_H != poolW) {
+            std::cerr << "Unexpected depth resolution " << w << "x" << h << "; expected a multiple of "
+                      << STAGE1_W << "x" << STAGE1_H << "\n";
+        }
+        cv::Mat small = depthPool(rawDepth, poolW, /*useMin=*/true);
 
         // Split of cnn_encode_frame() into its two steps so depth_in — the exact
         // normalized tensor the encoder consumes — is available for the preview
