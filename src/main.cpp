@@ -127,7 +127,6 @@ int main(int argc, char** argv) {
 
     const int STAGE1_W = 64, STAGE1_H = 48;   // first downsample
 #ifndef NO_DISPLAY
-    const int POOL_SIZE = 4;                    // 4x4 max pool -> 16x12, for the display only
     const int DISPLAY_SCALE = 40;               // 16x12 -> 640x480 window
 #endif
 
@@ -214,12 +213,16 @@ int main(int argc, char** argv) {
         cv::Mat small;
         cv::resize(rawDepth, small, cv::Size(STAGE1_W, STAGE1_H), 0, 0, cv::INTER_NEAREST);
 
-        // cnn_encode_frame() runs the training-matched normalize + 4x4 max-pool and the encoder
-        // forward pass in one call, straight off the raw millimetre buffer (small is freshly
-        // allocated, so it's contiguous). Built with CNN_INVALID_IS_FAR=1 (see Makefile): invalid/0
-        // readings map to max range (far), not the near/blind-zone default.
+        // Split of cnn_encode_frame() into its two steps so depth_in — the exact
+        // normalized tensor the encoder consumes — is available for the preview
+        // below. cnn_preprocess_u16() runs the training-matched normalize + 4x4
+        // max-pool straight off the raw millimetre buffer (small is freshly
+        // allocated, so it's contiguous). Built with CNN_INVALID_IS_FAR=1 (see
+        // Makefile): invalid/0 readings map to max range (far), not near/blind.
+        float depth_in[CNN_IN_H * CNN_IN_W];
         float features[CNN_FEATURE_DIM];
-        cnn_encode_frame(small.ptr<uint16_t>(), features);
+        cnn_preprocess_u16(small.ptr<uint16_t>(), depth_in);
+        cnn_forward(depth_in, features);
 #ifdef USE_RELAY
         // Hand the latest features to the relay thread, which transmits them to
         // the FC as NN_INPUT_CHUNK. The FC runs the recurrent half (see ../fc/).
@@ -228,20 +231,27 @@ int main(int argc, char** argv) {
 
 #ifndef NO_DISPLAY
         if (displayEnabled) {
-            // 4x4 max pooling: 64x48 -> 16x12
-            cv::Mat pooled = depthPool(small, POOL_SIZE, /*useMin=*/false);
-
-            // Normalize for viewing (grayscale)
-            double minVal, maxVal;
-            cv::minMaxLoc(pooled, &minVal, &maxVal);
-            cv::Mat normalized;
-            pooled.convertTo(normalized, CV_8UC1, 255.0 / (maxVal > 0 ? maxVal : 1));
+            // Show exactly what the CNN sees: the CNN_IN_H x CNN_IN_W normalized
+            // input (depth_in), post-inversion. Map the fixed value range to
+            // grayscale so brightness is absolute across frames: the closest
+            // surface (largest value) is white, the farthest (smallest) is black.
+            constexpr float vNear = CNN_NORM_NUM / CNN_NORM_MIN  - CNN_NORM_OFF; // nearest
+            constexpr float vFar  = CNN_NORM_NUM / CNN_MAX_RANGE - CNN_NORM_OFF; // farthest
+            cv::Mat cnnView(CNN_IN_H, CNN_IN_W, CV_8UC1);
+            for (int r = 0; r < CNN_IN_H; ++r) {
+                for (int c = 0; c < CNN_IN_W; ++c) {
+                    float s = 255.0f * (depth_in[r * CNN_IN_W + c] - vFar) / (vNear - vFar);
+                    if (s < 0.0f) s = 0.0f;
+                    if (s > 255.0f) s = 255.0f;
+                    cnnView.at<uint8_t>(r, c) = static_cast<uint8_t>(s);
+                }
+            }
 
             // Upscale just for display (blocky, no smoothing)
             cv::Mat display;
-            cv::resize(normalized, display, normalized.size() * DISPLAY_SCALE, 0, 0, cv::INTER_NEAREST);
+            cv::resize(cnnView, display, cnnView.size() * DISPLAY_SCALE, 0, 0, cv::INTER_NEAREST);
 
-            cv::imshow("Depth Stream (16x12 max-pooled)", display);
+            cv::imshow("CNN input (16x12, bright = near)", display);
             if (cv::waitKey(1) == 27) break; // ESC to quit
         }
 #endif
