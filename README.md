@@ -113,6 +113,26 @@ Prebuilt packages lag behind and often don't target aarch64/Raspberry Pi well, s
    rs-enumerate-devices    # should list the D435
    ```
 
+## Offline sync (target with no internet)
+
+If the companion computer (e.g. a Radxa) can't reach GitHub, move the repo with a
+git bundle — one integrity-checked file carrying full history, over USB or LAN.
+`scripts/offline_bundle.sh` wraps both ends:
+
+```sh
+# on a machine with the up-to-date repo:
+scripts/offline_bundle.sh create                          # -> ~/diffsim_hardware.bundle
+scripts/offline_bundle.sh create --send radxa@radxa-cubie-a7z:~   # also scp it across
+
+# copy the .bundle over (USB or scp), then on the offline machine:
+scripts/offline_bundle.sh apply ~/diffsim_hardware.bundle              # update an existing clone
+scripts/offline_bundle.sh apply ~/diffsim_hardware.bundle --clone ~/diffsim_hardware  # fresh clone
+```
+
+Run `scripts/offline_bundle.sh --help` for options. After applying, run
+`make clean` before rebuilding — git doesn't preserve mtimes, so stale objects can
+otherwise linger and cause link errors.
+
 ## Building this project
 
 ```
