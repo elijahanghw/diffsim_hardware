@@ -156,6 +156,7 @@ Optional flags:
 - `--fc-serial <dev>` — *(USE_RELAY builds only)* open the flight-controller serial link, e.g. `--fc-serial /dev/ttyDB`. Omit it to run without the FC link (just capture + encode). See below.
 - `--fc-baud <rate>` — *(USE_RELAY builds only)* FC serial baud rate. Defaults to `500000`.
 - `--log <path.csv>` — log time-stamped mocap and VO poses to a CSV for offline accuracy comparison. See [Logging poses](#logging-poses).
+- `--no-depth-filter` — disable the depth post-processing on the CNN input (on by default). See [Depth filtering](#depth-filtering).
 
 ```
 ./build/depthcam --record session.bag                     # on the robot
@@ -163,6 +164,25 @@ Optional flags:
 ./build/depthcam --fc-serial /dev/ttyDB                   # bridge to the FC at 500000 baud
 ./build/depthcam --fc-serial /dev/ttyDB --fc-baud 921600
 ```
+
+## Depth filtering
+
+The policy was trained on clean, dense, ray-traced depth, but the raw D435 stream
+is noisy and full of holes (dropouts on textureless / dark / reflective surfaces,
+object edges, and anything closer than the sensor's blind zone). Fed raw, those
+holes read as free space (the build maps invalid pixels to max range), so real
+obstacles can vanish from the policy's view — one reason avoidance is weaker on
+hardware than in HITL.
+
+To close that gap, the CNN depth input runs through the librealsense
+post-processing chain before downsampling: depth→disparity, spatial then temporal
+smoothing, disparity→depth, and hole-filling (nearest-from-around, so a dropout
+next to an obstacle reads near rather than through it). This is **on by default**;
+`--no-depth-filter` turns it off for A/B comparison. The visual-odometry path
+deliberately uses the *unfiltered* depth.
+
+The filters are stateful across frames (the temporal one keeps history) and add a
+few ms per frame — watch the loop-overrun log if the SBC is tight.
 
 ## Flight-controller bridge
 

@@ -29,7 +29,12 @@ int main(int argc, char** argv) {
     //                        in USE_RELAY builds.
     // --log <path.csv>     : log timestamped mocap (relay) and VO poses to a CSV
     //                        on one timeline, for offline accuracy plots.
+    // --no-depth-filter    : disable the librealsense post-processing chain on the
+    //                        CNN depth input (spatial/temporal/hole-filling). On by
+    //                        default; it cleans the raw sensor depth so it better
+    //                        matches the clean depth the policy trained on.
     std::string recordPath, replayPath, logPath;
+    bool depthFilter = true;
 #ifdef USE_RELAY
     std::string fcSerial;
     int fcBaud = 500000;
@@ -42,6 +47,8 @@ int main(int argc, char** argv) {
             replayPath = argv[++i];
         } else if (arg == "--log" && i + 1 < argc) {
             logPath = argv[++i];
+        } else if (arg == "--no-depth-filter") {
+            depthFilter = false;
         }
 #ifdef USE_RELAY
         else if (arg == "--fc-serial" && i + 1 < argc) {
@@ -130,6 +137,22 @@ int main(int argc, char** argv) {
     const int DISPLAY_SCALE = 40;               // 16x12 -> 640x480 window
 #endif
 
+    // librealsense post-processing chain for the CNN depth input, to clean the
+    // raw sensor depth so it resembles the dense, noise-free depth the policy was
+    // trained on (see README "Depth filtering"). Recommended order: convert to
+    // disparity, spatial + temporal smoothing there, back to depth, then fill
+    // holes. Stateful (temporal keeps history), so these persist across frames.
+    // The VO path is left on unfiltered depth. Disable with --no-depth-filter.
+    rs2::disparity_transform depth2disparity(true);
+    rs2::disparity_transform disparity2depth(false);
+    rs2::spatial_filter spatialFilter;
+    rs2::temporal_filter temporalFilter;
+    rs2::hole_filling_filter holeFilter;
+    // Fill holes from the nearest surrounding depth: for obstacle avoidance it is
+    // safer for a dropout next to an obstacle to read near than to read through it.
+    holeFilter.set_option(RS2_OPTION_HOLES_FILL, 2.0f);  // 2 = nearest_from_around
+    std::cerr << "Depth filtering: " << (depthFilter ? "on" : "off (--no-depth-filter)") << "\n";
+
     // Fixed-rate control loop at 20 Hz. next_tick advances by a fixed period
     // each iteration (rather than "now + period"), so occasional overruns
     // don't accumulate drift in the schedule.
@@ -203,11 +226,25 @@ int main(int argc, char** argv) {
         }
 #endif
 
-        int w = depth.get_width();
-        int h = depth.get_height();
+        // Clean the sensor depth (spatial/temporal/hole-filling) so it better
+        // matches the dense, noise-free depth the policy trained on. The chain is
+        // stateful across frames; VO above deliberately uses the unfiltered depth.
+        rs2::depth_frame cnnDepth = depth;
+        if (depthFilter) {
+            rs2::frame f = depth;
+            f = depth2disparity.process(f);
+            f = spatialFilter.process(f);
+            f = temporalFilter.process(f);
+            f = disparity2depth.process(f);
+            f = holeFilter.process(f);
+            cnnDepth = f.as<rs2::depth_frame>();
+        }
 
-        // Wrap raw RealSense depth buffer as an OpenCV Mat (no copy)
-        cv::Mat rawDepth(cv::Size(w, h), CV_16UC1, (void*)depth.get_data(), cv::Mat::AUTO_STEP);
+        int w = cnnDepth.get_width();
+        int h = cnnDepth.get_height();
+
+        // Wrap the (filtered) RealSense depth buffer as an OpenCV Mat (no copy)
+        cv::Mat rawDepth(cv::Size(w, h), CV_16UC1, (void*)cnnDepth.get_data(), cv::Mat::AUTO_STEP);
 
         // Downsample to CNN_RAW_W x CNN_RAW_H (nearest-neighbor keeps real sample values)
         cv::Mat small;
