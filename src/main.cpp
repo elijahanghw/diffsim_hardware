@@ -17,6 +17,19 @@
 #include "relay/fc_relay.h"
 #endif
 
+#ifndef NO_DISPLAY
+// Colorize a CV_16UC1 depth map (millimetres) for display: JET with near = warm,
+// far = cool, and holes (0) shown black. Returns a BGR image the same size.
+static cv::Mat colorizeDepth(const cv::Mat& depthMm, double maxMm) {
+    cv::Mat u8, color;
+    // near (small mm) -> 255 (red), far (maxMm) -> 0 (blue); saturates.
+    depthMm.convertTo(u8, CV_8UC1, -255.0 / maxMm, 255.0);
+    cv::applyColorMap(u8, color, cv::COLORMAP_JET);
+    color.setTo(cv::Scalar(0, 0, 0), depthMm == 0);  // invalid/holes -> black
+    return color;
+}
+#endif
+
 int main(int argc, char** argv) {
     // --record <path.bag>  : capture the raw camera stream to a file while running live
     // --replay <path.bag>  : run the whole pipeline (VO, policy input, display) off a
@@ -33,8 +46,16 @@ int main(int argc, char** argv) {
     //                        CNN depth input (spatial/temporal/hole-filling). On by
     //                        default; it cleans the raw sensor depth so it better
     //                        matches the clean depth the policy trained on.
+    // --view <stage>       : which stage to show in the preview window, for isolating
+    //                        latency/choppiness: raw (640x480 sensor depth) |
+    //                        filtered (after the filter chain) | small (64x48
+    //                        min-pooled) | cnn (the 12x16 encoder input, default).
+    // --rate <hz>          : loop rate (default 20, the policy rate). Raise it (e.g.
+    //                        --rate 30) to test whether the cap is the choppiness.
     std::string recordPath, replayPath, logPath;
     bool depthFilter = true;
+    std::string viewMode = "cnn";
+    double loopHz = 20.0;
 #ifdef USE_RELAY
     std::string fcSerial;
     int fcBaud = 500000;
@@ -49,6 +70,10 @@ int main(int argc, char** argv) {
             logPath = argv[++i];
         } else if (arg == "--no-depth-filter") {
             depthFilter = false;
+        } else if (arg == "--view" && i + 1 < argc) {
+            viewMode = argv[++i];
+        } else if (arg == "--rate" && i + 1 < argc) {
+            loopHz = std::atof(argv[++i]);
         }
 #ifdef USE_RELAY
         else if (arg == "--fc-serial" && i + 1 < argc) {
@@ -57,6 +82,13 @@ int main(int argc, char** argv) {
             fcBaud = std::atoi(argv[++i]);
         }
 #endif
+    }
+
+    if (loopHz <= 0.0) { std::cerr << "--rate must be > 0; using 20\n"; loopHz = 20.0; }
+    if (viewMode != "raw" && viewMode != "filtered" && viewMode != "small" && viewMode != "cnn") {
+        std::cerr << "unknown --view '" << viewMode << "'; using cnn "
+                     "(raw|filtered|small|cnn)\n";
+        viewMode = "cnn";
     }
 
     // Pose logger (mocap vs VO). Enabled by --log; a no-op otherwise.
@@ -77,7 +109,13 @@ int main(int argc, char** argv) {
         cfg.enable_device_from_file(replayPath);
     } else {
         cfg.enable_stream(RS2_STREAM_DEPTH, 640, 480, RS2_FORMAT_Z16, 30);
+#ifdef USE_VO
+        // Color is only consumed by VO. Enabling it doubles USB bandwidth
+        // (~370 Mbps for both at 640x480@30), which does not fit USB2 and causes
+        // dropped frames / choppiness. So only stream it when VO needs it — a
+        // depth-only build fits USB2 comfortably.
         cfg.enable_stream(RS2_STREAM_COLOR, 640, 480, RS2_FORMAT_BGR8, 30);
+#endif
         if (!recordPath.empty()) cfg.enable_record_to_file(recordPath);
     }
     rs2::pipeline_profile profile = pipe.start(cfg);
@@ -153,11 +191,11 @@ int main(int argc, char** argv) {
     holeFilter.set_option(RS2_OPTION_HOLES_FILL, 2.0f);  // 2 = nearest_from_around
     std::cerr << "Depth filtering: " << (depthFilter ? "on" : "off (--no-depth-filter)") << "\n";
 
-    // Fixed-rate control loop at 20 Hz. next_tick advances by a fixed period
-    // each iteration (rather than "now + period"), so occasional overruns
-    // don't accumulate drift in the schedule.
+    // Fixed-rate control loop at loopHz (default 20, the policy rate). next_tick
+    // advances by a fixed period each iteration (rather than "now + period"), so
+    // occasional overruns don't accumulate drift in the schedule.
     using clock = std::chrono::steady_clock;
-    const auto LOOP_PERIOD = std::chrono::duration<double>(1.0 / 20.0);
+    const auto LOOP_PERIOD = std::chrono::duration<double>(1.0 / loopHz);
     auto next_tick = clock::now();
 
     // Sleeps until next_tick if there's time left, otherwise reports how far behind
@@ -166,7 +204,7 @@ int main(int argc, char** argv) {
         if (clock::now() < next_tick) {
             std::this_thread::sleep_until(next_tick);
         } else {
-            std::cerr << "20 Hz loop overrun by "
+            std::cerr << loopHz << " Hz loop overrun by "
                       << std::chrono::duration<double, std::milli>(clock::now() - next_tick).count()
                       << " ms" << context << "\n";
         }
@@ -276,27 +314,43 @@ int main(int argc, char** argv) {
 
 #ifndef NO_DISPLAY
         if (displayEnabled) {
-            // Show exactly what the CNN sees: the CNN_IN_H x CNN_IN_W normalized
-            // input (depth_in), post-inversion. Map the fixed value range to
-            // grayscale so brightness is absolute across frames: the closest
-            // surface (largest value) is white, the farthest (smallest) is black.
-            constexpr float vNear = CNN_NORM_NUM / CNN_NORM_MIN  - CNN_NORM_OFF; // nearest
-            constexpr float vFar  = CNN_NORM_NUM / CNN_MAX_RANGE - CNN_NORM_OFF; // farthest
-            cv::Mat cnnView(CNN_IN_H, CNN_IN_W, CV_8UC1);
-            for (int r = 0; r < CNN_IN_H; ++r) {
-                for (int c = 0; c < CNN_IN_W; ++c) {
-                    float s = 255.0f * (depth_in[r * CNN_IN_W + c] - vFar) / (vNear - vFar);
-                    if (s < 0.0f) s = 0.0f;
-                    if (s > 255.0f) s = 255.0f;
-                    cnnView.at<uint8_t>(r, c) = static_cast<uint8_t>(s);
+            // Pick a pipeline stage to display, for isolating latency/choppiness.
+            const double maxMm = CNN_MAX_RANGE * 1000.0;
+            cv::Mat display;
+            const char* title = "";
+            if (viewMode == "raw") {
+                // Unfiltered 640x480 sensor depth (compare against realsense-viewer).
+                cv::Mat orig(cv::Size(depth.get_width(), depth.get_height()), CV_16UC1,
+                             (void*)depth.get_data(), cv::Mat::AUTO_STEP);
+                display = colorizeDepth(orig, maxMm);
+                title = "raw depth (640x480)";
+            } else if (viewMode == "filtered") {
+                // After the filter chain (rawDepth wraps the filtered frame).
+                display = colorizeDepth(rawDepth, maxMm);
+                title = "filtered depth (640x480)";
+            } else if (viewMode == "small") {
+                // After the min-pool downsample (64x48), upscaled blocky.
+                cv::Mat c = colorizeDepth(small, maxMm);
+                cv::resize(c, display, c.size() * (640 / STAGE1_W), 0, 0, cv::INTER_NEAREST);
+                title = "min-pooled (64x48)";
+            } else {  // "cnn": the exact 12x16 normalized encoder input, post-inversion.
+                // Fixed grayscale range so brightness is absolute: nearest = white.
+                constexpr float vNear = CNN_NORM_NUM / CNN_NORM_MIN  - CNN_NORM_OFF;
+                constexpr float vFar  = CNN_NORM_NUM / CNN_MAX_RANGE - CNN_NORM_OFF;
+                cv::Mat cnnView(CNN_IN_H, CNN_IN_W, CV_8UC1);
+                for (int r = 0; r < CNN_IN_H; ++r) {
+                    for (int c = 0; c < CNN_IN_W; ++c) {
+                        float s = 255.0f * (depth_in[r * CNN_IN_W + c] - vFar) / (vNear - vFar);
+                        if (s < 0.0f) s = 0.0f;
+                        if (s > 255.0f) s = 255.0f;
+                        cnnView.at<uint8_t>(r, c) = static_cast<uint8_t>(s);
+                    }
                 }
+                cv::resize(cnnView, display, cnnView.size() * DISPLAY_SCALE, 0, 0, cv::INTER_NEAREST);
+                title = "CNN input (16x12, bright = near)";
             }
 
-            // Upscale just for display (blocky, no smoothing)
-            cv::Mat display;
-            cv::resize(cnnView, display, cnnView.size() * DISPLAY_SCALE, 0, 0, cv::INTER_NEAREST);
-
-            cv::imshow("CNN input (16x12, bright = near)", display);
+            cv::imshow(title, display);
             if (cv::waitKey(1) == 27) break; // ESC to quit
         }
 #endif

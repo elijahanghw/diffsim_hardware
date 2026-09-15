@@ -177,6 +177,10 @@ Optional flags:
 - `--fc-baud <rate>` — *(USE_RELAY builds only)* FC serial baud rate. Defaults to `500000`.
 - `--log <path.csv>` — log time-stamped mocap and VO poses to a CSV for offline accuracy comparison. See [Logging poses](#logging-poses).
 - `--no-depth-filter` — disable the depth post-processing on the CNN input (on by default). See [Depth filtering](#depth-filtering).
+- `--view <stage>` — which stage the preview window shows, for isolating latency/choppiness: `raw` (640×480 sensor depth), `filtered` (after the filter chain), `small` (64×48 min-pooled), or `cnn` (the 12×16 encoder input, default).
+- `--rate <hz>` — loop rate, default 20 (the policy rate). Raise it (e.g. `--rate 30`) to test whether the cap is the choppiness.
+
+Note: the color stream is only enabled in `USE_VO` builds (VO is its only consumer). Depth + color at 640×480@30 is ~370 Mbps and does not fit USB2 — a depth-only build fits comfortably, but any `USE_VO` build needs a **USB3** connection (`rs-enumerate-devices | grep "Usb Type"` should report `3.x`).
 
 ```
 ./build/depthcam --record session.bag                     # on the robot
